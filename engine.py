@@ -6,9 +6,9 @@ import math
 import os
 import sys
 from typing import Iterable
-
+from util.misc import interpolate
 import torch
-
+import numpy as np;
 import util.misc as utils
 from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
@@ -18,6 +18,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     device: torch.device, epoch: int, max_norm: float = 0):
     model.train()
     criterion.train()
+    map = mAP()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     #metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
@@ -27,6 +28,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         outputs = model(samples)
+        map.update(outputs, targets)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -55,12 +57,52 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(loss=loss_value)
         #metric_logger.update(class_error=loss_dict_reduced['class_error'])
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        metric_logger.update(map = map.calculate_mAP())
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
+class mAP():
+    def __init__(self,):
+        self.AP_dict = {}
+        for thr in range(50, 100, 5):
+            self.AP_dict[thr] = []
+    
+    def update(self,outputs, targets):
+
+        targets = targets[0]['masks'].detach().cpu().numpy()
+        targets = targets.astype(int)
+        outputs = outputs['pred_masks']
+        outputs = outputs[:,:360:10,:,:]
+        outputs = interpolate(outputs, size=targets.shape[-2:], mode="bilinear", align_corners=False).squeeze(0).detach().cpu().numpy()
+        outputs = outputs > 0.5
+        outputs = outputs.astype(int)
+        add = targets + outputs
+        sub = outputs - targets 
+        TP = (add == 2).sum()#; print(TP)
+        FP = (add == 1).sum()#; print(FP)
+        FN = (sub == 1).sum()#; print(FN)
+        IoU = (TP / (TP+FP+FN)) * 100
+
+        for thr in self.AP_dict.keys():
+            if IoU > thr:
+                self.AP_dict[thr].append(1)
+            else:
+                self.AP_dict[thr].append(0)
+
+
+    def calculate_mAP(self):
+        TP_num = 0
+        total = 0
+        for thr in self.AP_dict.keys():
+            total += len(self.AP_dict[thr])
+            TP_num += sum(self.AP_dict[thr])
+        
+        mAP = TP_num / total
+        return mAP
+    
 
 @torch.no_grad()
 def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
