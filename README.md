@@ -22,7 +22,7 @@ python setup.py build_ext --inplace
 
 ### Preparation
 
-Download the pretrained DETR models [Google Drive](https://drive.google.com/drive/folders/1DlN8uWHT2WaKruarGW2_XChhpZeI9MFG?usp=sharing) [BaiduYun](https://pan.baidu.com/s/12omUNDRjhAeGZ5olqQPpHA)(passcode:alge) on COCO and save it to the pretrained path.
+If you want to use pretrained DETR models [Google Drive](https://drive.google.com/drive/folders/1DlN8uWHT2WaKruarGW2_XChhpZeI9MFG?usp=sharing) [BaiduYun](https://pan.baidu.com/s/12omUNDRjhAeGZ5olqQPpHA)(passcode:alge) on COCO and save it to the pretrained path.
 
 
 ### Training
@@ -31,7 +31,7 @@ Training of the model requires at least 32g memory GPU, we performed the experim
 
 To train baseline VisTR on a single node with 8 gpus for 18 epochs, run:
 ```
-python -m torch.distributed.launch --nproc_per_node=8 --use_env main.py --backbone resnet101/50 --ytvos_path /path/to/ytvos --masks --pretrained_weights /path/to/pretrained_path
+main.py --backbone resnet50 --ytvos_path /path/to/ytvos --masks --pretrained_weights /path/to/pretrained_path
 ```
 
 ### Inference
