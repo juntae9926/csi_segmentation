@@ -1,5 +1,6 @@
 ## CSI Segmentation
-We address segmentation task with csi dataset.
+
+We applied human segmentation task with csi dataset.
 
 This is [VisTR paper](https://arxiv.org/abs/2011.14503)
 
