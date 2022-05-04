@@ -94,30 +94,44 @@ class mAP_():
         self.AP_dict = {}
         for thr in range(50, 100, 5):
             self.AP_dict[thr] = []
+        self.IoU = []
         self.eps = 1e-05
     
-    def update(self,outputs, targets):
+    def update(self,outputs, targets, iter):
+        #import pdb; pdb.set_trace()
         targets = targets[0]['masks'].detach().cpu().numpy()
         targets = targets.astype(int)
-        outputs = outputs['pred_masks']
-        outputs = outputs[:,:360:10,:,:]
-        outputs = interpolate(outputs, size=targets.shape[-2:], mode="bilinear", align_corners=False).squeeze(0).detach().cpu().numpy()
+        # outputs = outputs['pred_masks']
+        # outputs = outputs[:,:360:10,:,:]
+        # outputs = interpolate(outputs, size=targets.shape[-2:], mode="bilinear", align_corners=False).squeeze(0).detach().cpu().numpy()
+        outputs = outputs.squeeze(1)
+        outputs = outputs.detach().cpu().numpy()
         outputs = outputs > 0.5
         outputs = outputs.astype(int)
         add = targets + outputs
         sub = outputs - targets 
+        #import pdb; pdb.set_trace()
         TP = (add == 2).sum()#; print(TP)
         FP = (add == 1).sum()#; print(FP)
         TN = (add == 0).sum()#; print(TN)
         FN = (sub == 1).sum()#; print(FN)
         IoU = (TP / (TP+FP+FN+self.eps)) * 100
-        print('TP: {}, FP: {}, FN: {}, TN: {}, IoU: {}'.format(TP, FP, FN, TN, IoU))
+        self.IoU.append(IoU)
+
+        if iter % 500:
+            print('TP: {}, FP: {}, FN: {}, TN: {}, IoU: {}'.format(TP, FP, FN, TN, IoU))
+        
         for thr in self.AP_dict.keys():
             if IoU > thr:
                 self.AP_dict[thr].append(1)
             else:
                 self.AP_dict[thr].append(0)
 
+    def calculate_mIoU(self):
+        num = len(self.IoU)
+        total = sum(self.IoU)
+        mIoU = total/num
+        return mIoU
 
     def calculate_mAP(self):
         TP_num = 0
@@ -139,6 +153,18 @@ class mAP_():
             AP_dict[thr] = AP
 
         return AP_dict
+
+    def print_and_save(self, logger, mode):
+        #import pdb; pdb.set_trace()
+        logger.info("========== {} Performance ==========".format(mode))
+        mIoU = self.calculate_mIoU()
+        logger.info('mIoU: {}'.format(mIoU))
+        mAP = self.calculate_mAP()
+        logger.info('mAP: {}'.format(mAP))
+        ap_dict = self.calculate_APs()
+        for thr in ap_dict.keys():
+            logger.info('AP_'+str(thr)+': {}'.format(ap_dict[thr]))
+        logger.info("====================================")
 
 @torch.no_grad()
 def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):

@@ -8,6 +8,9 @@ import json
 import random
 import time
 from pathlib import Path
+import os
+import sys
+import logging
 
 import numpy as np
 import torch
@@ -119,6 +122,11 @@ def main(args):
     np.random.seed(seed)
     random.seed(seed)
 
+    ## make log file
+    #import pdb; pdb.set_trace()
+    if not os.path.exists(args.log_dir):
+        Path(args.log_dir).mkdir(exist_ok=True, parents=True)
+
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
@@ -188,13 +196,21 @@ def main(args):
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
 
+    # Set logger
+    logger = logging.getLogger('')
+    logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(os.path.join(args.log_dir, 'performance.log'))
+    sh = logging.StreamHandler(sys.stdout)
+    logger.addHandler(fh)
+    logger.addHandler(sh)
+
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, device, epoch,
+            model, criterion, data_loader_train, optimizer, device, epoch, logger,
             args.clip_max_norm)
         lr_scheduler.step()
         if args.output_dir:
@@ -213,7 +229,7 @@ def main(args):
         ## validation
         print('=============== validation started! ====================')
         val_stats = val_one_epoch(
-            model, criterion, data_loader_train, device,
+            model, criterion, data_loader_train, device, logger,
             args.clip_max_norm)
         print('=============== validation finished! ==================')
 
