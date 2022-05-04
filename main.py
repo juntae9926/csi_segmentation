@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
-from engine import evaluate, train_one_epoch
+from engine import evaluate, train_one_epoch, val_one_epoch
 from models import build_model
 
 
@@ -43,9 +43,9 @@ def get_args_parser():
                         help="Type of positional embedding to use on top of the image features")
 
     # * Transformer
-    parser.add_argument('--enc_layers', default=6, type=int,
+    parser.add_argument('--enc_layers', default=1, type=int,
                         help="Number of encoding layers in the transformer")
-    parser.add_argument('--dec_layers', default=6, type=int,
+    parser.add_argument('--dec_layers', default=1, type=int,
                         help="Number of decoding layers in the transformer")
     parser.add_argument('--dim_feedforward', default=2048, type=int,
                         help="Intermediate size of the feedforward layers in the transformer blocks")
@@ -88,7 +88,7 @@ def get_args_parser():
     parser.add_argument('--ytvos_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
 
-    parser.add_argument('--output_dir', default='r101_vistr',
+    parser.add_argument('--output_dir', default='checkpoint',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -155,13 +155,26 @@ def main(args):
 
     output_dir = Path(args.output_dir)
     
+    ## validation dataset
+    #import pdb; pdb.set_trace()
+    dataset_val = build_dataset(image_set='val', args=args)
+    if args.distributed:
+        sampler_val = DistributedSampler(dataset_val)
+    else:
+        sampler_val = torch.utils.data.RandomSampler(dataset_val)
+
+    batch_sampler_val = torch.utils.data.BatchSampler(
+        sampler_val, args.batch_size, drop_last=True)
+
+    data_loader_val = DataLoader(dataset_val, batch_sampler=batch_sampler_val,
+                                   collate_fn=utils.collate_fn, num_workers=args.num_workers)
     # load coco pretrained weight
-    # checkpoint = torch.load(args.pretrained_weights, map_location='cpu')['model']
-    # del checkpoint["vistr.class_embed.weight"]
-    # del checkpoint["vistr.class_embed.bias"]
-    # del checkpoint["vistr.query_embed.weight"]
-    # #model.module.load_state_dict(checkpoint,strict=False)
-    # model.load_state_dict(checkpoint, strict=False)
+    checkpoint = torch.load(args.pretrained_weights, map_location='cpu')['model']
+    del checkpoint["vistr.class_embed.weight"]
+    del checkpoint["vistr.class_embed.bias"]
+    del checkpoint["vistr.query_embed.weight"]
+    #model.module.load_state_dict(checkpoint,strict=False)
+    model.load_state_dict(checkpoint, strict=False)
 
     if args.resume:
         if args.resume.startswith('https'):
@@ -197,7 +210,12 @@ def main(args):
                     'epoch': epoch,
                     'args': args,
                 }, checkpoint_path)
-
+        ## validation
+        print('=============== validation started! ====================')
+        val_stats = val_one_epoch(
+            model, criterion, data_loader_train, device,
+            args.clip_max_norm)
+        print('=============== validation finished! ==================')
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

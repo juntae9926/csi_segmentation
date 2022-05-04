@@ -282,7 +282,6 @@ def _max_by_axis(the_list):
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor], split=True):
     # TODO make this more general
     if split:
-
         tensor_list = [tensor.split(3,dim=0) for tensor in tensor_list] # 36*3*300*305
         tensor_list = [item for sublist in tensor_list for item in sublist]
     if tensor_list[0].ndim == 3:

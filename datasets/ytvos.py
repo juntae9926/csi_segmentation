@@ -69,8 +69,7 @@ class CSIDataset:
         self.return_masks = return_masks
         self.num_frames = num_frames
         self.prepare = ConvertCocoPolysToMask(return_masks) # csi_folder, csi, label_folder, label
-        self.tile_size = (300, 540)
-        self.time_step = 3
+        self.tile_size = (150, 270)
         self.csi_infos = []
         self.label_infos = []
 
@@ -90,7 +89,7 @@ class CSIDataset:
 
                 try:
                     label_path = os.path.join(img_folder[1], i, j)
-                    with open(label_path, 'rb') as f:
+                    with open(label_path.split('.')[0]+'.pkl', 'rb') as f:
                         label_info = pickle.load(f)  
                         if label_info.ndim != 2: # 사람 여러명 있는 label을 2차원으로 합치기
                             label_info = np.sum(label_info, axis=0) # 어레이 합치기 [3, 300, 540] -> [300, 540]
@@ -107,18 +106,18 @@ class CSIDataset:
         self.len = len(self.csi_infos) - self.num_frames + 1
 
     def __len__(self):
+        # return self.len // 36
         return self.len
 
     def __getitem__(self, idx):
-
+        # idx = idx*36
         csi_list = list()
         label_list = list()
         for i in range(self.num_frames):
-            csi_list.append(self.csi_infos[i])
-            label_list.append(self.label_infos[i])
+            csi_list.append(self.csi_infos[idx+i])
+            label_list.append(self.label_infos[idx+i])
         csi_array = np.array(csi_list) # 36, 3, 3, 150
-        #csi_array = np.tile(csi_array, (100, 2)).reshape(-1, 300, 300)
-        csi_array = self.multi_scale(csi_array).reshape(-1, 300, 540)
+        csi_array = self.multi_scale(csi_array).reshape(-1, 150, 270)
         label_array = np.array(label_list)
         label_array = label_array > 0
         
@@ -127,21 +126,21 @@ class CSIDataset:
         return torch.Tensor(csi_array), target
 
     def multi_scale(self, XX):
-        
-        XX = XX.transpose(1,2,3,0)
-        scaled_total = np.zeros((36,3,300,540))
+         # XX: [36, 3, 3, 150]
+        scaled_list = list()
         for scale_num in range(1,4):
-            tx, rx, T, _ = XX.shape ## = 36
-
-            t = np.random.randint(T - self.time_step)
-            XX_time_step = XX[:, :, t:t + self.time_step:, :]
+            T, tx, rx,  S = XX.shape ## 
 
             tx_rand = np.random.randint(tx - scale_num + 1)
             rx_rand = np.random.randint(rx - scale_num + 1)
-            XX_multi_scaled = XX_time_step[tx_rand : tx_rand + scale_num, rx_rand : rx_rand + scale_num, :, :]
-            XX_multi_scaled = np.tile(XX_multi_scaled, (int(np.ceil(self.tile_size[0]/scale_num)), int(np.ceil(self.tile_size[1]/scale_num)), 1, 1))[:self.tile_size[0], :self.tile_size[1], :, :]
-            XX_multi_scaled = XX_multi_scaled.transpose(3, 2, 0, 1)
-            scaled_total += XX_multi_scaled
+            #XX_multi_scaled = XX_time_step[tx_rand : tx_rand + scale_num, rx_rand : rx_rand + scale_num, :, :]
+            XX_multi_scaled = XX[:, tx_rand : tx_rand + scale_num, rx_rand : rx_rand + scale_num, :]
+            XX_multi_scaled = XX_multi_scaled.reshape(36, -1, 150)
+            XX_multi_scaled = np.tile(XX_multi_scaled, (1, 1, int(np.ceil(self.tile_size[0]/scale_num**2)), int(np.ceil(self.tile_size[1]/S))))[:, :, :self.tile_size[0], :self.tile_size[1]]
+
+            scaled_list.append(XX_multi_scaled)
+        
+        scaled_total = np.concatenate(scaled_list, axis=1)
 
         return scaled_total
 
@@ -273,6 +272,7 @@ def build(image_set, args):
     # }
     PATHS = {
         "train": (root / "train/csi", root / "train/label"),
+        "val": (root / "val/csi", root / "val/label")
         #"train": (root / "train/csi", root / "label" / f'{mode}_train_sub.json'),
         # "val": (root / "valid/JPEGImages", root / "annotations" / f'{mode}_val_sub.json'),
     }

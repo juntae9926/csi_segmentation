@@ -18,7 +18,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     device: torch.device, epoch: int, max_norm: float = 0):
     model.train()
     criterion.train()
-    map = mAP()
+    map = mAP_()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     #metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
@@ -64,14 +64,39 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-class mAP():
-    def __init__(self,):
+
+def val_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
+                    data_loader: Iterable,
+                    device: torch.device, max_norm: float = 0):
+    model.eval()
+    map = mAP_()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = '[valid]'
+    print_freq = 10
+    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+        samples = samples.to(device)
+        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        outputs = model(samples)
+        map.update(outputs, targets)
+        #metric_logger.update(map = map.calculate_mAP())
+    
+    mAP = map.calculate_mAP()
+    print('mAP: {}'.format(mAP))
+    ap_dict = map.calculate_APs()
+    for thr in ap_dict.keys():
+        print('AP_'+str(thr)+': {}'.format(ap_dict[thr]))
+
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+
+class mAP_():
+    def __init__(self):
         self.AP_dict = {}
         for thr in range(50, 100, 5):
             self.AP_dict[thr] = []
+        self.eps = 1e-05
     
     def update(self,outputs, targets):
-
         targets = targets[0]['masks'].detach().cpu().numpy()
         targets = targets.astype(int)
         outputs = outputs['pred_masks']
@@ -83,9 +108,10 @@ class mAP():
         sub = outputs - targets 
         TP = (add == 2).sum()#; print(TP)
         FP = (add == 1).sum()#; print(FP)
+        TN = (add == 0).sum()#; print(TN)
         FN = (sub == 1).sum()#; print(FN)
-        IoU = (TP / (TP+FP+FN)) * 100
-
+        IoU = (TP / (TP+FP+FN+self.eps)) * 100
+        print('TP: {}, FP: {}, FN: {}, TN: {}, IoU: {}'.format(TP, FP, FN, TN, IoU))
         for thr in self.AP_dict.keys():
             if IoU > thr:
                 self.AP_dict[thr].append(1)
@@ -102,7 +128,17 @@ class mAP():
         
         mAP = TP_num / total
         return mAP
-    
+
+    def calculate_APs(self):
+        AP_dict = {}
+        for thr in self.AP_dict.keys():
+            total = 0; TP_num = 0
+            total += len(self.AP_dict[thr])
+            TP_num += sum(self.AP_dict[thr])
+            AP = TP_num / total
+            AP_dict[thr] = AP
+
+        return AP_dict
 
 @torch.no_grad()
 def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
@@ -189,3 +225,5 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         stats['PQ_th'] = panoptic_res["Things"]
         stats['PQ_st'] = panoptic_res["Stuff"]
     return stats, coco_evaluator
+
+
