@@ -15,7 +15,7 @@ from datasets.panoptic_eval import PanopticEvaluator
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, max_norm: float = 0):
+                    device: torch.device, epoch: int, logger, max_norm: float = 0):
     model.train()
     criterion.train()
     map = mAP_()
@@ -24,11 +24,13 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     #metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
+    iter = 0
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+        iter +=1
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         outputs = model(samples)
-        map.update(outputs, targets)
+        map.update(outputs, targets, iter)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -59,32 +61,34 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(map = map.calculate_mAP())
 
+    ## Print and save mAP, APs, mIoU
+    map.print_and_save(logger, 'train')
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
+
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
 def val_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable,
-                    device: torch.device, max_norm: float = 0):
+                    device: torch.device, logger, max_norm: float = 0):
     model.eval()
     map = mAP_()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = '[valid]'
     print_freq = 10
+    iter = 0
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+        iter +=1
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         outputs = model(samples)
-        map.update(outputs, targets)
+        map.update(outputs, targets, iter)
         #metric_logger.update(map = map.calculate_mAP())
-    
-    mAP = map.calculate_mAP()
-    print('mAP: {}'.format(mAP))
-    ap_dict = map.calculate_APs()
-    for thr in ap_dict.keys():
-        print('AP_'+str(thr)+': {}'.format(ap_dict[thr]))
+
+    ## Print and save mAP, APs, mIoU
+    map.print_and_save(logger, 'validation')
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
@@ -101,16 +105,14 @@ class mAP_():
         #import pdb; pdb.set_trace()
         targets = targets[0]['masks'].detach().cpu().numpy()
         targets = targets.astype(int)
-        # outputs = outputs['pred_masks']
-        # outputs = outputs[:,:360:10,:,:]
-        # outputs = interpolate(outputs, size=targets.shape[-2:], mode="bilinear", align_corners=False).squeeze(0).detach().cpu().numpy()
-        outputs = outputs.squeeze(1)
-        outputs = outputs.detach().cpu().numpy()
+        outputs = outputs['pred_masks']
+        outputs = outputs[:,:360:10,:,:]
+        outputs = interpolate(outputs, size=targets.shape[-2:], mode="bilinear", align_corners=False).squeeze(0).detach().cpu().numpy()
+        #outputs = outputs.squeeze(1)
         outputs = outputs > 0.5
         outputs = outputs.astype(int)
         add = targets + outputs
         sub = outputs - targets 
-        #import pdb; pdb.set_trace()
         TP = (add == 2).sum()#; print(TP)
         FP = (add == 1).sum()#; print(FP)
         TN = (add == 0).sum()#; print(TN)
